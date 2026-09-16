@@ -1,27 +1,36 @@
 #pragma once
 
 // ---------------------------------------------------------------------------
-// GPIO map -- ESP32-WROOM-32 (30-pin DevKit V1)
+// GPIO map -- ESP32-S3-DevKitC-1, WROOM-1 N16R8 (16MB flash, 8MB octal PSRAM)
 //
-// Deliberately avoided:
-//   6-11   SPI flash          -- instant crash
-//   12     MTDI strap         -- sets flash voltage to 1.8V, bricks the module
-//   5,14,15  boot PWM burst   -- these emit pulses during boot; a pulse on the
-//                               relay pin would kick a 1HP contactor at power-up
-//   1,3    UART0              -- USB serial
-//   34-39  input-only, no internal pull-ups
+// The S3's usable GPIOs are 0-21 and 26-48. GPIO 22-25 DO NOT EXIST on this
+// chip -- 22 + 23 = the 45 pins the datasheet claims. Off-limits here:
+//   22-25   not bonded out         -- silently do nothing if you assign them
+//   26-32   SPI flash              -- instant crash
+//   33-37   OCTAL PSRAM            -- the R8 in N16R8. Reserved whether or not
+//                                     PSRAM is enabled in software; they are
+//                                     physically bonded inside the module.
+//   0,3,45,46  strapping           -- boot mode, JTAG select, VDD_SPI voltage
+//   19,20   USB D-/D+              -- using these kills native USB
+//   43,44   UART0 TX/RX            -- serial monitor
+//   48      onboard RGB LED        -- on the DevKitC-1
+//
+// Unlike the original ESP32, the S3 has no boot-time PWM burst pins, so the
+// old 5/14/15 prohibition does not apply here. Every pin below is a plain,
+// unreserved GPIO -- verified with scripts/validate_pinmap.py for esp32s3.
 // ---------------------------------------------------------------------------
 
-#define PIN_RELAY    23   // -> relay module IN -> contactor coil
-#define PIN_FLOW     27   // <- YF-DN25 hall pulse (interrupt)
-#define PIN_US_TRIG  26   // -> AJ-SR04M TRIG
-#define PIN_US_ECHO  25   // <- AJ-SR04M ECHO (via 20k/10k divider, 5V -> 3.3V)
-#define PIN_FLOAT    33   // <- high-level float switch (also wired in series
-                          //    with the contactor coil as a hardware interlock)
-#define PIN_BUTTON   18   // <- momentary button to GND
-#define PIN_LED      19   // -> status LED (+220R to GND)
+#define PIN_RELAY     5   // -> relay module IN -> contactor coil
+#define PIN_FLOW      4   // <- YF-DN25 hall pulse (interrupt)
+#define PIN_US_TRIG   6   // -> AJ-SR04M TRIG
+#define PIN_US_ECHO   7   // <- AJ-SR04M ECHO (via 20k/10k divider, 5V -> 3.3V)
+#define PIN_FLOAT    15   // <- high-level float switch (the real interlock is
+                          //    the 5V float loop breaking the contactor coil;
+                          //    this pin is only the telemetry copy)
+#define PIN_BUTTON   16   // <- momentary button to GND
+#define PIN_LED      17   // -> status LED (+220R to GND)
 
-// GPIO 21/22 left free for a future I2C OLED.
+// GPIO 8/9 left free for a future I2C OLED (the S3's conventional SDA/SCL).
 
 // Most import relay boards are ACTIVE-LOW. An external 10k pull-up from
 // PIN_RELAY to 3V3 holds the relay OFF through the ~200ms boot window while

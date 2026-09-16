@@ -1,6 +1,6 @@
 # WIOT — Municipal Water Auto-Fill (Motor 2)
 
-ESP32 controller that detects when the municipal water supply arrives and fills the
+ESP32-S3 controller that detects when the municipal water supply arrives and fills the
 ground tank without anyone having to wake up at 6am.
 
 The municipal line here is **dead until the pump pulls on it** — there is no standing
@@ -73,7 +73,7 @@ almost always be *"supply ended"*, and *"tank full"* will be rare. That is norma
 
 | # | Item | Suggested part | ~₹ |
 |---|---|---|---|
-| 1 | MCU | ESP32-WROOM-32 DevKit V1, 30-pin | 350 |
+| 1 | MCU | **ESP32-S3-DevKitC-1**, WROOM-1 N16R8 | 1100 |
 | 2 | Flow sensor | **YF-DN25** — G1" brass, 2–100 L/min | 700 |
 | 3 | Level sensor | **AJ-SR04M** waterproof ultrasonic (separate probe on a cable) | 400 |
 | 4 | Overflow float | Vertical float switch, NC, ½" side-mount (any voltage — it runs on 5V here) | 200 |
@@ -197,7 +197,7 @@ still respects the float interlock, which is what you want.
 ## Wiring: low-voltage side
 
 ```
-  5V SMPS ──┬── ESP32 VIN            (do NOT also power via USB at the same time)
+  5V SMPS ──┬── ESP32-S3 `5V` pin     (do NOT also power via USB at the same time)
             ├── AJ-SR04M  VCC
             ├── YF-DN25   VCC (red)
             ├── Relay module VCC
@@ -208,32 +208,53 @@ still respects the float interlock, which is what you want.
   GND ──── common star point: ESP32 GND, sensors, relay module, SMPS −
 ```
 
-| ESP32 GPIO | Connects to | Notes |
+| ESP32-S3 GPIO | Connects to | Notes |
 |---|---|---|
-| **23** | Relay module `IN` | **Add a 10 kΩ pull-up from GPIO23 to 3V3.** Not optional — see below. |
-| **27** | YF-DN25 signal (yellow) | 10 kΩ pull-up to 3V3 |
-| **26** | AJ-SR04M `TRIG` | — |
-| **25** | AJ-SR04M `ECHO` | **Via 20k/10k divider** — the module echoes 5 V, the ESP32 is 3.3 V only |
-| **33** | Float switch sense | Tap the junction of the float and the interposing relay coil, through a 10 kΩ series resistor. Telemetry only. |
-| **18** | Momentary button → GND | Short press = check now / stop. Long press (3 s) = clear fault. |
-| **19** | Status LED anode (+220 Ω → GND) | Slow blink idle · fast blink testing · solid pumping · stutter fault |
-| 21 / 22 | *left free* | For an I2C OLED later |
+| **5** | Relay module `IN` | **Add a 10 kΩ pull-up from GPIO5 to 3V3.** Not optional — see below. |
+| **4** | YF-DN25 signal (yellow) | 10 kΩ pull-up to 3V3 |
+| **6** | AJ-SR04M `TRIG` | — |
+| **7** | AJ-SR04M `ECHO` | **Via 20k/10k divider** — the module echoes 5 V, the ESP32 is 3.3 V only |
+| **15** | Float switch sense | Tap the junction of the float and the interposing relay coil, through a 10 kΩ series resistor. Telemetry only. |
+| **16** | Momentary button → GND | Short press = check now / stop. Long press (3 s) = clear fault. |
+| **17** | Status LED anode (+220 Ω → GND) | Slow blink idle · fast blink testing · solid pumping · stutter fault |
+| 8 / 9 | *left free* | For an I2C OLED later |
 
-**The 10 kΩ pull-up on GPIO23 is the single most important low-voltage component.**
-Import relay boards are active-LOW, and during the ~200 ms ESP32 boot window GPIO23 is
-still a floating input. Without the pull-up holding it high, the relay can click on at
-power-up and start a 1HP pump with nobody watching. The firmware also drives it OFF on
-the very first line of `setup()`, before `Serial.begin()` — belt and braces.
+**The 10 kΩ pull-up on GPIO5 is the single most important low-voltage component.**
+Import relay boards are active-LOW, and during the ~200 ms boot window GPIO5 is still a
+floating input. Without the pull-up holding it high, the relay can click on at power-up
+and start a 1HP pump with nobody watching. The firmware also drives it OFF on the very
+first line of `setup()`, before `Serial.begin()` — belt and braces.
 
-**GPIO 5, 14 and 15 are deliberately unused.** They emit a PWM burst during boot on the
-ESP32, which is exactly the glitch you do not want anywhere near a pump contactor.
-GPIO 12 is avoided too — it is the flash-voltage strapping pin and pulling it high at
-boot can brick the module.
+### Which S3 pins you cannot use
+
+The S3's usable GPIOs are **0–21 and 26–48**. GPIO **22–25 do not exist** on this chip —
+22 + 23 = the 45 pins the datasheet claims. Assigning one silently does nothing.
+
+| Off limits | Why |
+|---|---|
+| 22–25 | Not bonded out on the S3 |
+| 26–32 | SPI flash — instant crash |
+| **33–37** | **Octal PSRAM — the "R8" in N16R8.** Reserved whether or not PSRAM is enabled in software; they are physically bonded inside the module. |
+| 0, 3, 45, 46 | Strapping: boot mode, JTAG select, VDD_SPI voltage |
+| 19, 20 | USB D−/D+ — using these kills native USB |
+| 43, 44 | UART0 TX/RX — the serial monitor |
+| 48 | Onboard RGB LED on the DevKitC-1 |
+
+Unlike the original ESP32, **the S3 has no boot-time PWM burst pins**, so the old
+"never put a relay on GPIO 5/14/15" rule doesn't apply here — GPIO5 is a plain,
+unreserved pin on this chip. The pull-up is still required, because every S3 GPIO
+floats as an input until firmware claims it.
+
+Verify any change with the skill's checker:
+
+```bash
+python ~/.claude/skills/esp32/scripts/validate_pinmap.py --format json < pins.json
+```
 
 **Voltage divider for ECHO** (20 kΩ / 10 kΩ):
 
 ```
-  AJ-SR04M ECHO ──[ 20k ]──┬──► GPIO25
+  AJ-SR04M ECHO ──[ 20k ]──┬──► GPIO7
                            │
                          [ 10k ]
                            │
@@ -280,7 +301,7 @@ Edit `src/secrets.h` with your WiFi and MQTT credentials. It is gitignored, so i
 reaches GitHub.
 
 ```bash
-python -m platformio run -e esp32dev --target upload
+python -m platformio run -e esp32-s3-devkitc-1 --target upload
 ```
 
 Then watch it come up:
@@ -466,7 +487,7 @@ catch the supply within half an hour of it arriving, at half the wear. Watch
 |---|---|
 | Relay clicks on at power-up | Missing 10 kΩ pull-up on GPIO23, or the relay module is active-HIGH — swap `RELAY_ON`/`RELAY_OFF` in `config.h` |
 | `distance_cm` always 0 | Water is inside the 25 cm blind zone; ECHO divider wired wrong; or the probe isn't pointing at the water |
-| `flow_lpm` always 0 while pumping | Flow sensor installed backwards (check the arrow), missing pull-up on GPIO27, or the sensor is powered from 3V3 instead of 5V |
+| `flow_lpm` always 0 while pumping | Flow sensor installed backwards (check the arrow), missing pull-up on GPIO4, or the sensor is powered from 3V3 instead of 5V |
 | Every test reports a dry line | `flow_threshold` too high, or `pulses_per_litre` far too high — calibrate |
 | Pump stops and restarts repeatedly | `lowflow_window_s` too short for a sputtering supply — raise it to 120 |
 | State stuck in `fault` | Float reads full while the level reads under 50% — one of the two sensors is lying. Check the float isn't stuck up. Long-press the button or use Clear Fault. |
